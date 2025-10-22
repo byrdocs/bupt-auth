@@ -49,11 +49,16 @@ export class OCRError extends Error {
 
 /**
  * **refresh** 函数用于刷新 token，需要传入 refresh_token。
+ * @param refresh_token refresh token
+ * @param user_id 用户 ID（可选），如果提供则会在请求中附加 identity 字段
  */
-export async function refresh(refresh_token: string): Promise<UserInfo> {
+export async function refresh(refresh_token: string, user_id?: string): Promise<UserInfo> {
   const body: FormData = new FormData();
   body.append("grant_type", "refresh_token");
   body.append("refresh_token", refresh_token);
+  if (user_id) {
+    body.append("identity", String(Number(user_id) + 1));
+  }
   const res = await fetch(
     "https://apiucloud.bupt.edu.cn/ykt-basics/oauth/token",
     {
