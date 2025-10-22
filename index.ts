@@ -57,7 +57,7 @@ export async function refresh(refresh_token: string, user_id?: string): Promise<
   body.append("grant_type", "refresh_token");
   body.append("refresh_token", refresh_token);
   if (user_id) {
-    body.append("identity", String(Number(user_id) + 1));
+    body.append("identity", String(BigInt(user_id) + 1n));
   }
   const res = await fetch(
     "https://apiucloud.bupt.edu.cn/ykt-basics/oauth/token",
