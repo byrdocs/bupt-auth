@@ -47,17 +47,28 @@ export class OCRError extends Error {
   }
 }
 
+export enum RoleSelect {
+  Student = "学生",
+  Teacher = "教师",
+  Assistant = "助教",
+}
+
 /**
  * **refresh** 函数用于刷新 token，需要传入 refresh_token。
  * @param refresh_token refresh token
- * @param user_id 用户 ID（可选），如果提供则会在请求中附加 identity 字段
+ * @param role_select 角色选择（可选），如果提供则会在请求中附加 identity 字段，主要用于解决账户存在多个角色的情况
  */
-export async function refresh(refresh_token: string, user_id?: string): Promise<UserInfo> {
+export async function refresh(refresh_token: string, role_select?: RoleSelect): Promise<UserInfo> {
   const body: FormData = new FormData();
   body.append("grant_type", "refresh_token");
   body.append("refresh_token", refresh_token);
-  if (user_id) {
-    body.append("identity", String(BigInt(user_id) + 1n));
+  if (role_select) {
+    const roles = await getUserRoles(refresh_token);
+    const role = roles.find(role => role.roleName === role_select);
+    if (!role) {
+      throw new Error(`Role ${role_select} not found`);
+    }
+    body.append("identity", role.id);
   }
   const res = await fetch(
     "https://apiucloud.bupt.edu.cn/ykt-basics/oauth/token",
@@ -73,6 +84,31 @@ export async function refresh(refresh_token: string, user_id?: string): Promise<
   return json;
 }
 
+export type UserRole = {
+  id: string,
+  roleId: string,
+  roleAliase: string,
+  roleName: string,
+  domainId: string,
+  domainName: string,
+  // more fields are ignored
+}
+
+/**
+ * **getUserRoles** 函数用于获取当前用户的 role list，需要传入 access_token/refresh_token。
+ * @param access_token/refresh_token access token/refresh token
+ * @returns Promise<{@link UserRole[]}>
+ */
+export async function getUserRoles(access_token: string): Promise<UserRole[]> {
+  const res = await fetch("https://apiucloud.bupt.edu.cn/ykt-basics/userroledomaindept/listByUserId", {
+    headers: {
+      authorization: "Basic cG9ydGFsOnBvcnRhbF9zZWNyZXQ=",
+      "Blade-Auth": access_token,
+    },
+  });
+  return (await res.json())["data"] as UserRole[];
+}
+  
 type Session = {
   id: string;
   cookie: string;
