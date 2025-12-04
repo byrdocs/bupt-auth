@@ -136,6 +136,7 @@ export class CaptchaError extends Error {
   session: Session;
   username: string;
   password: string;
+  role?: RoleSelect; // 新增角色属性
   constructor(
     message: string,
     data: {
@@ -144,6 +145,7 @@ export class CaptchaError extends Error {
       execution: string;
       username: string;
       password: string;
+      role?: RoleSelect; // 接收角色参数
     }
   ) {
     super(message);
@@ -151,6 +153,7 @@ export class CaptchaError extends Error {
     this.session = data;
     this.username = data.username;
     this.password = data.password;
+    this.role = data.role; // 存储角色参数
   }
 
   /**
@@ -170,20 +173,21 @@ export class CaptchaError extends Error {
   }
 
   /**
-   * 传入验证码
+   * 传入验证码并继续登录流程
    *
    * @param captcha 验证码
    * @returns Promise<{@link UserInfo}>
    */
   async resolve(captcha: string): Promise<UserInfo> {
+    // 传递当前实例中可能存在的角色参数
     return await login(this.username, this.password, {
       ...this.session,
       captcha,
-    });
+    }, this.role); // 需要在CaptchaError类中添加role属性
   }
 }
 
-async function getCookieAndExecution(username: string, password: string) {
+async function getCookieAndExecution(username: string, password: string, role?: RoleSelect) {
   const res = await fetch(
     "https://auth.bupt.edu.cn/authserver/login?service=https://ucloud.bupt.edu.cn"
   );
@@ -206,33 +210,38 @@ async function getCookieAndExecution(username: string, password: string) {
       execution,
       username,
       password,
+      role,
     });
   }
   return { cookie, execution };
 }
 
 /**
- * **login** 函数用于登录，需要传入用户名和密码。
+ * **login** 函数用于登录，需要传入用户名和密码，可指定身份角色。
  *
  * ```ts
+ * // 默认使用第一个身份
  * await login("username", "password");
+ * // 指定使用学生身份
+ * await login("username", "password", undefined, RoleSelect.Student);
  * ```
  *
  * 当登录时需要验证码时会抛出 {@link CaptchaError} 错误，传入验证码的方式详见 {@link CaptchaError}。
- * 登录成功后会自动使用第一个角色刷新一次token并返回最新信息
  *
  * @param username 用户名
  * @param password 密码
- * @param session 验证码的 session
+ * @param session 验证码的 session（可选）
+ * @param role 要使用的身份角色（可选，默认使用第一个身份）
  * @returns Promise<{@link UserInfo}>
  */
 export async function login(
   username: string,
   password: string,
-  session?: Session & { captcha: string }
+  session?: Session & { captcha: string },
+  role?: RoleSelect // 新增角色参数
 ): Promise<UserInfo> {
   const { cookie, execution } =
-    session ?? (await getCookieAndExecution(username, password));
+    session ?? (await getCookieAndExecution(username, password,role));
   const bodyp = `username=${encodeURIComponent(
     username
   )}&password=${encodeURIComponent(password)}`;
@@ -259,6 +268,7 @@ export async function login(
     }
   );
   if (response.status != 302) {
+    // 错误处理逻辑保持不变...
     const html = await response.text();
     const errors = new RegExp(
       /<div class="alert alert-danger" id="errorDiv">.*?<p>(.*?)<\/p>.*?<\/div>/gs
@@ -319,11 +329,22 @@ export async function login(
     throw new LoginError("登录失败: 未找到用户角色");
   }
   
-  // 使用第一个角色刷新token
-  const firstRole = roles[0];
+  // 确定要使用的角色（优先使用传入的角色，否则使用第一个）
+  let targetRole: UserRole;
+  if (role) {
+    console.log("指定角色登录: ", role);
+    targetRole = roles.find(r => r.roleName === role)!;
+    if (!targetRole) {
+      throw new LoginError(`指定的角色 ${role} 不存在`);
+    }
+  } else {
+    targetRole = roles[0];
+  }
+  
+  // 使用目标角色刷新token
   const refreshedUserInfo = await refresh(
     initialUserInfo.refresh_token,
-    firstRole.roleName as RoleSelect
+    targetRole.roleName as RoleSelect
   );
   
   return refreshedUserInfo;
