@@ -219,6 +219,7 @@ async function getCookieAndExecution(username: string, password: string) {
  * ```
  *
  * 当登录时需要验证码时会抛出 {@link CaptchaError} 错误，传入验证码的方式详见 {@link CaptchaError}。
+ * 登录成功后会自动使用第一个角色刷新一次token并返回最新信息
  *
  * @param username 用户名
  * @param password 密码
@@ -308,7 +309,24 @@ export async function login(
   if (!response.ok) {
     throw new LoginError(`登录失败(7): ${response.status} ${response.statusText}`);
   }
-  return await response.json();
+
+  // 登录成功后获取初始用户信息
+  const initialUserInfo = await response.json();
+  
+  // 获取用户角色列表
+  const roles = await getUserRoles(initialUserInfo.refresh_token);
+  if (roles.length === 0) {
+    throw new LoginError("登录失败: 未找到用户角色");
+  }
+  
+  // 使用第一个角色刷新token
+  const firstRole = roles[0];
+  const refreshedUserInfo = await refresh(
+    initialUserInfo.refresh_token,
+    firstRole.roleName as RoleSelect
+  );
+  
+  return refreshedUserInfo;
 }
 
 async function ocr(captcha: CaptchaError, token: string) {
