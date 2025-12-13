@@ -1,13 +1,20 @@
 # bupt-auth
 
 [![API Docs](https://img.shields.io/badge/API%20Docs-green
-)](https://jsr.io/@byrdocs/bupt-auth) [![Publish](https://github.com/byrdocs/bupt-auth/actions/workflows/publish.yml/badge.svg)](https://github.com/byrdocs/bupt-auth/actions/workflows/publish.yml)
+)](https://jsr.io/@byrdocs/bupt-auth/doc) [![Publish](https://github.com/byrdocs/bupt-auth/actions/workflows/publish.yml/badge.svg)](https://github.com/byrdocs/bupt-auth/actions/workflows/publish.yml)
 
 北京邮电大学统一身份认证。
 
 ## 安装
 
-见 [jsr.io/@byrdocs/bupt-auth](https://jsr.io/@byrdocs/bupt-auth)。
+```sh
+# pnpm
+pnpm dlx jsr add @byrdocs/bupt-auth
+# bun
+bunx jsr add @byrdocs/bupt-auth
+```
+
+详见 [jsr.io/@byrdocs/bupt-auth](https://jsr.io/@byrdocs/bupt-auth)。
 
 ## 使用
 
