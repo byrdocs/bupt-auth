@@ -1,4 +1,4 @@
-import { getUserRoles, login, refresh, RoleSelect } from ".";
+import { getUserRoles, login, refresh, Role } from ".";
 import { describe, test, expect } from "bun:test";
 import { getTestAccount } from "./utils";
 
@@ -31,7 +31,7 @@ describe("refresh", () => {
     const { bupt_id, bupt_pass } = await getTestAccount();
     const res = await login(bupt_id, bupt_pass);
     const refresh_token = res.refresh_token;
-    const refreshed = await refresh(refresh_token, RoleSelect.Student);
+    const refreshed = await refresh(refresh_token, Role.Student);
     expect(refreshed.account).toEqual(bupt_id);
     expect(refreshed.account).toEqual(res.account);
     expect(refreshed.real_name).toEqual(res.real_name);

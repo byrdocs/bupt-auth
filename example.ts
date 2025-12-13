@@ -1,24 +1,22 @@
-import { login, CaptchaError, type UserInfo } from ".";
+import {
+    login
+} from ".";
 import { getTestAccount, input } from "./utils";
 
 const { bupt_id, bupt_pass } = await getTestAccount();
 
-async function login_auth(): Promise<UserInfo> {
-    try {
-        const res = await login(bupt_id, bupt_pass);
-        return res;
-    } catch (e) {
-        if (e instanceof CaptchaError) {
-            console.log("Captchas required. ")
-            console.log("\tCaptcha URL: ", e.captcha());
-            console.log("\tCookie:", e.cookie())
-            const captcha = await input("Captcha: ");
-            const res = await e.resolve(captcha);
-            return res;
-        } else {
-            throw e;
-        }
+login(bupt_id, bupt_pass, {
+    onCaptcha: async (url, cookie) => {
+        console.log("需要验证码");
+        console.log("\t验证码 URL:", url);
+        console.log("\tCookie:", cookie);
+        return await input("请输入验证码: ");
     }
-}
-
-console.log(await login_auth());
+}).then((res) => {
+    console.log("登录成功!");
+    console.log("用户名:", res.user_name);
+    console.log("姓名:", res.real_name);
+    console.log("角色:", res.roles.map(r => r.roleName).join(", "));
+}).catch((err) => {
+    console.error("登录失败:", err);
+});

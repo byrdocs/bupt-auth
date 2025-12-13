@@ -1,5 +1,10 @@
 # bupt-auth
 
+[![JSR](https://jsr.io/badges/@byrdocs/bupt-auth)](https://jsr.io/@byrdocs/bupt-auth) [![API Docs](https://img.shields.io/badge/API%20Docs-green
+)](https://jsr.io/@byrdocs/bupt-auth) [![Publish](https://github.com/byrdocs/bupt-auth/actions/workflows/publish.yml/badge.svg)](https://github.com/byrdocs/bupt-auth/actions/workflows/publish.yml)
+
+北京邮电大学统一身份认证。
+
 ## 安装
 
 见 [jsr.io/@byrdocs/bupt-auth](https://jsr.io/@byrdocs/bupt-auth)。
@@ -7,23 +12,21 @@
 ## 使用
 
 ```ts
-import { login, CaptchaError, type UserInfo } from "@byrdocs/bupt-auth";
+import { login } from "@byrdocs/bupt-auth";
 
-try {
-    const res: UserInfo = await login(bupt_id, bupt_pass);
-    console.log(res)
-} catch (e) {
-    if (e instanceof CaptchaError) {
-        // 如果需要验证码
-        console.log("Captchas required. ")
-        console.log("\tCaptcha URL: ", e.captcha());
-        console.log("\tCookie:", e.cookie())
-        // 携带 cookie 获取验证码图片，然后输入验证码
-        const captcha = await input("Captcha: ");
-        const res: UserInfo = await e.resolve(captcha);
-        console.log(res)
-    } else {
-        throw e;
+login(bupt_id, bupt_pass, {
+    onCaptcha: async (url, cookie) => {
+        console.log("需要验证码");
+        console.log("\t验证码 URL:", url);
+        console.log("\tCookie:", cookie);
+        return await input("请输入验证码: ");
     }
-}
+}).then((res) => {
+    console.log("登录成功!");
+    console.log("用户名:", res.user_name);
+    console.log("姓名:", res.real_name);
+    console.log("角色:", res.roles.map(r => r.roleName).join(", "));
+}).catch((err) => {
+    console.error("登录失败:", err);
+});
 ```

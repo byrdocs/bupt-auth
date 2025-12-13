@@ -8,7 +8,6 @@ export type UserInfo = {
   expires_in: number;
   scope: string;
   tenant_id: string;
-  role_name: string;
   license: string;
   loginId: string;
   /** 用户 ID
@@ -47,28 +46,72 @@ export class OCRError extends Error {
   }
 }
 
-export enum RoleSelect {
+export enum Role {
   Student = "学生",
   Teacher = "教师",
   Assistant = "助教",
 }
 
+export type RoleInfo = {
+  id: string,
+  roleId: string,
+  roleAliase: string,
+  roleName: Role,
+  domainId: string,
+  domainName: string,
+  // more fields are ignored
+}
+
+/**
+ * **LoginOptions** 登录选项配置
+ */
+export type LoginOptions = {
+  /**
+   * 指定登录使用的角色（适用于一个账号有多个身份的情况）
+   * 如果不指定，将使用默认角色
+   */
+  role?: Role;
+
+  /**
+   * 验证码处理函数，当需要验证码时会调用此函数
+   * @param captchaUrl 验证码图片的 URL
+   * @param cookie 当前会话的 cookie
+   * @returns 识别出的验证码文本
+   */
+  onCaptcha?: (captchaUrl: string, cookie: string) => PromiseLike<string>;
+
+  /**
+   * OCR 自动识别验证码配置
+   * 如果设置了此项，当遇到验证码时会自动使用 OCR 识别
+   */
+  ocr?: {
+    /**
+     * Byrdocs OCR token
+     */
+    token: string;
+    /**
+     * OCR 失败时的最大重试次数（默认为 3）
+     */
+    maxRetries?: number;
+  };
+}
+
 /**
  * **refresh** 函数用于刷新 token，需要传入 refresh_token。
  * @param refresh_token refresh token
- * @param role_select 角色选择（可选），如果提供则会在请求中附加 identity 字段，主要用于解决账户存在多个角色的情况
+ * @param role 角色（可选），适用于一个账号有多个身份的情况
  */
-export async function refresh(refresh_token: string, role_select?: RoleSelect): Promise<UserInfo> {
+export async function refresh(refresh_token: string, role?: Role): Promise<UserInfo> {
   const body: FormData = new FormData();
   body.append("grant_type", "refresh_token");
   body.append("refresh_token", refresh_token);
-  if (role_select) {
+  if (role) {
     const roles = await getUserRoles(refresh_token);
-    const role = roles.find(role => role.roleName === role_select);
-    if (!role) {
-      throw new Error(`Role ${role_select} not found`);
+    const roleInfo = roles.find(r => r.roleName === role);
+    if (!roleInfo) {
+      throw new LoginError(`用户不存在角色 ${role}`);
     }
-    body.append("identity", role.id);
+    body.append("identity", roleInfo.id);
   }
   const res = await fetch(
     "https://apiucloud.bupt.edu.cn/ykt-basics/oauth/token",
@@ -80,110 +123,37 @@ export async function refresh(refresh_token: string, role_select?: RoleSelect): 
       body,
     }
   );
+  if (!res.ok) {
+    throw new LoginError(`刷新 token 失败: ${res.status} ${res.statusText}`);
+  }
   const json: UserInfo = await res.json();
   return json;
 }
 
-export type UserRole = {
-  id: string,
-  roleId: string,
-  roleAliase: string,
-  roleName: string,
-  domainId: string,
-  domainName: string,
-  // more fields are ignored
-}
-
 /**
- * **getUserRoles** 函数用于获取当前用户的 role list，需要传入 access_token/refresh_token。
- * @param access_token/refresh_token access token/refresh token
- * @returns Promise<{@link UserRole[]}>
+ * **getUserRoles** 函数用于获取当前用户的角色
+ * @param token access token/refresh token
+ * @returns Promise<{@link RoleInfo[]}>
  */
-export async function getUserRoles(access_token: string): Promise<UserRole[]> {
+export async function getUserRoles(token: string): Promise<RoleInfo[]> {
   const res = await fetch("https://apiucloud.bupt.edu.cn/ykt-basics/userroledomaindept/listByUserId", {
     headers: {
       authorization: "Basic cG9ydGFsOnBvcnRhbF9zZWNyZXQ=",
-      "Blade-Auth": access_token,
+      "Blade-Auth": token,
     },
   });
-  return (await res.json())["data"] as UserRole[];
+  if (!res.ok) {
+    throw new LoginError(`获取用户角色失败: ${res.status} ${res.statusText}`);
+  }
+  return (await res.json())["data"] as RoleInfo[];
 }
-  
-type Session = {
+
+async function getCookieAndExecution(options?: LoginOptions): Promise<{
   id: string;
   cookie: string;
   execution: string;
-};
-
-/**
- * **CaptchaError** 错误类，当登录时需要验证码时会抛出这个错误。
- *
- * 可以通过 {@link captcha} 方法获取验证码的 URL，通过 {@link resolve}(captcha: string) 方法来传入验证码。例如
- *
- * ```ts
- * try {
- *    return await login(bupt_id, bupt_pass);
- * } catch (e) {
- *   if (e instanceof CaptchaError) {
- *     return await e.resolve(await resolveCaptcha(e.captcha()));
- *   } else {
- *     throw e;
- *   }
- * }
- *
- */
-export class CaptchaError extends Error {
-  session: Session;
-  username: string;
-  password: string;
-  constructor(
-    message: string,
-    data: {
-      id: string;
-      cookie: string;
-      execution: string;
-      username: string;
-      password: string;
-    }
-  ) {
-    super(message);
-    this.name = "CaptchaError";
-    this.session = data;
-    this.username = data.username;
-    this.password = data.password;
-  }
-
-  /**
-   * @returns 验证码的 URL
-   */
-  captcha(): string {
-    return `https://auth.bupt.edu.cn/authserver/captcha?captchaId=${
-      this.session.id
-    }&r=${Math.random().toString().slice(2, 7)}`;
-  }
-
-  /**
-   * @returns cookie
-   */
-  cookie(): string {
-    return this.session.cookie;
-  }
-
-  /**
-   * 传入验证码
-   *
-   * @param captcha 验证码
-   * @returns Promise<{@link UserInfo}>
-   */
-  async resolve(captcha: string): Promise<UserInfo> {
-    return await login(this.username, this.password, {
-      ...this.session,
-      captcha,
-    });
-  }
-}
-
-async function getCookieAndExecution(username: string, password: string) {
+  captcha?: string;
+}> {
   const res = await fetch(
     "https://auth.bupt.edu.cn/authserver/login?service=https://ucloud.bupt.edu.cn"
   );
@@ -200,38 +170,79 @@ async function getCookieAndExecution(username: string, password: string) {
   const capthas = html.match(/config.captcha[^{]*{[^}]*id: '(.*?)'/);
   const capthas_id = capthas?.[1];
   if (capthas_id) {
-    throw new CaptchaError(`登录失败(-3): 需要验证码`, {
-      id: capthas_id,
-      cookie,
-      execution,
-      username,
-      password,
-    });
+    const captchaUrl = `https://auth.bupt.edu.cn/authserver/captcha?captchaId=${capthas_id}&r=${Math.random().toString().slice(2, 7)}`;
+
+    if (options?.onCaptcha) {
+      const captchaText = await options.onCaptcha(captchaUrl, cookie);
+      return {
+        id: capthas_id,
+        cookie,
+        execution,
+        captcha: captchaText,
+      };
+    } else if (options?.ocr) {
+      const maxRetries = options.ocr.maxRetries || 3;
+      let lastError: Error | null = null;
+
+      for (let attempt = 0; attempt < maxRetries; attempt++) {
+        try {
+          const captchaText = await fetch("https://ocr.byrdocs.org/ocr?" + new URLSearchParams({
+            url: captchaUrl,
+            token: options.ocr.token,
+            cookie
+          })).then(async res => {
+            const data = await res.json() as { text?: string, detail?: string };
+            if (!data.text) throw new OCRError("OCR 识别失败: " + (data.detail ?? "Unknown error"));
+            return data.text;
+          });
+          return {
+            id: capthas_id,
+            cookie,
+            execution,
+            captcha: captchaText,
+          };
+        } catch (error) {
+          lastError = error instanceof Error ? error : new OCRError(String(error));
+          if (attempt < maxRetries - 1) {
+            continue;
+          }
+        }
+      }
+
+      throw lastError!;
+    } else {
+      throw new LoginError(`登录失败(-3): 需要验证码，但未配置验证码处理方式`);
+    }
   }
-  return { cookie, execution };
+  return { id: "", cookie, execution };
 }
 
 /**
  * **login** 函数用于登录，需要传入用户名和密码。
  *
  * ```ts
- * await login("username", "password");
+ * await login("username", "password", {
+ *   onCaptcha: async (url, cookie) => {
+ *     console.log("Please solve captcha:", url, cookie);
+ *     return await getUserInput();
+ *   }
+ * });
  * ```
  *
- * 当登录时需要验证码时会抛出 {@link CaptchaError} 错误，传入验证码的方式详见 {@link CaptchaError}。
+ * 注意：如果登录时需要验证码但未配置 onCaptcha，会抛出错误。
  *
  * @param username 用户名
  * @param password 密码
- * @param session 验证码的 session
+ * @param options 登录选项
  * @returns Promise<{@link UserInfo}>
  */
 export async function login(
   username: string,
   password: string,
-  session?: Session & { captcha: string }
-): Promise<UserInfo> {
-  const { cookie, execution } =
-    session ?? (await getCookieAndExecution(username, password));
+  options?: LoginOptions
+): Promise<UserInfo & { roles: RoleInfo[] }> {
+  const sessionData = await getCookieAndExecution(options);
+  const { cookie, execution } = sessionData;
   const bodyp = `username=${encodeURIComponent(
     username
   )}&password=${encodeURIComponent(password)}`;
@@ -250,7 +261,7 @@ export async function login(
       },
       body:
         bodyp +
-        (session?.captcha ? `&captcha=${session.captcha}` : "") +
+        (sessionData.captcha ? `&captcha=${sessionData.captcha}` : "") +
         "&submit=%E7%99%BB%E5%BD%95&type=username_password&execution=" +
         execution +
         "&_eventId=submit",
@@ -274,10 +285,10 @@ export async function login(
     }
     throw new LoginError(
       "登录失败(1): " +
-        response.status +
-        " " +
-        response.statusText +
-        (error ? `(${error})` : "")
+      response.status +
+      " " +
+      response.statusText +
+      (error ? `(${error})` : "")
     );
   }
   const location = response.headers.get("Location");
@@ -294,7 +305,7 @@ export async function login(
     {
       headers: {
         accept: "application/json, text/plain, */*",
-        authorization: "Basic  cG9ydGFsOnBvcnRhbF9zZWNyZXQ=",
+        authorization: "Basic cG9ydGFsOnBvcnRhbF9zZWNyZXQ=",
         "content-type": "application/x-www-form-urlencoded",
         "tenant-id": "000000",
         Referer: "https://ucloud.bupt.edu.cn/",
@@ -308,49 +319,19 @@ export async function login(
   if (!response.ok) {
     throw new LoginError(`登录失败(7): ${response.status} ${response.statusText}`);
   }
-  return await response.json();
-}
 
-async function ocr(captcha: CaptchaError, token: string) {
-  const res = await fetch("https://ocr.byrdocs.org/ocr?" + new URLSearchParams({
-    url: captcha.captcha(),
-    token,
-    cookie: captcha.cookie()
-  }))
-  const data = await res.json() as { text?: string, detail?: string }
-  if (!data.text) throw new OCRError("OCRError:" + (data.detail ?? "Unknown error"));
-  return data.text
-}
+  const userInfo: UserInfo = await response.json();
+  const roles = await getUserRoles(userInfo.refresh_token);
 
-/**
- * @param username 学号
- * @param password 密码
- * @param token byrdocs ocr token
- * @param retry 重试次数（默认为 1）
- * @returns Promise<{@link UserInfo}>
- */
-export async function byrdocs_login(
-  username: string,
-  password: string,
-  token: string,
-  retry = 1
-): Promise<UserInfo> {
-  try {
-    const data = await login(username, password);
-    return data;
-  } catch (e) {
-    if (e instanceof CaptchaError) {
-      const captcha = await ocr(e, token);
-      try {
-        return await e.resolve(captcha);
-      } catch (e) {
-        if (retry > 0) {
-          return await byrdocs_login(username, password, token, retry - 1);
-        }
-        throw e;
-      }
-    } else {
-      throw e;
-    }
+  if (roles.length === 0) {
+    throw new LoginError("登录失败(8): 用户无任何角色");
+  }
+
+  return {
+    ...(await refresh(
+      userInfo.refresh_token,
+      options?.role ?? roles[0].roleName
+    )),
+    roles
   }
 }
