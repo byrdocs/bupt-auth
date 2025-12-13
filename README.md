@@ -1,6 +1,6 @@
 # bupt-auth
 
-[![JSR](https://jsr.io/badges/@byrdocs/bupt-auth)](https://jsr.io/@byrdocs/bupt-auth) [![API Docs](https://img.shields.io/badge/API%20Docs-green
+[![API Docs](https://img.shields.io/badge/API%20Docs-green
 )](https://jsr.io/@byrdocs/bupt-auth) [![Publish](https://github.com/byrdocs/bupt-auth/actions/workflows/publish.yml/badge.svg)](https://github.com/byrdocs/bupt-auth/actions/workflows/publish.yml)
 
 北京邮电大学统一身份认证。
