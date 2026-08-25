@@ -27,6 +27,23 @@ export type UserInfo = {
 };
 
 /**
+ * **CASUserInfo** 类型包含通过 CAS（统一认证）校验直接获取的用户信息。
+ *
+ * 相比 {@link UserInfo}，它不经过 ucloud 换取 token，因此不含 `access_token`
+ * 等字段，也没有角色信息，只有 CAS 服务端愿意暴露的基础属性。
+ */
+export type CASUserInfo = {
+  /** 学号 */
+  user_name: string;
+  /** 姓名 */
+  real_name: string;
+  /** 身份类型代码，例如本科生为 `L0103` */
+  type: string;
+  /** CAS 返回的全部原始属性（不同 service 暴露的字段可能不同） */
+  attributes: Record<string, string>;
+};
+
+/**
  * **LoginError** 错误类，当登录失败时会抛出这个错误。
  */
 export class LoginError extends Error {
@@ -69,8 +86,19 @@ export type LoginOptions = {
   /**
    * 指定登录使用的角色（适用于一个账号有多个身份的情况）
    * 如果不指定，将使用默认角色
+   *
+   * 仅在走 ucloud 获取信息时生效（即 `cas` 未开启时）。
    */
   role?: Role;
+
+  /**
+   * 是否改用 CAS（统一认证）直接获取用户信息，而不经过 ucloud 换取 token。
+   *
+   * - `false`（默认）：走 ucloud，返回完整的 {@link UserInfo} 及角色列表。
+   * - `true`：仅用 CAS `serviceValidate` 校验并返回 {@link CASUserInfo}，
+   *   速度更快，但只包含学号、姓名、身份类型等基础属性，且没有 token 和角色。
+   */
+  cas?: boolean;
 
   /**
    * 验证码处理函数，当需要验证码时会调用此函数
@@ -148,6 +176,53 @@ export async function getUserRoles(token: string): Promise<RoleInfo[]> {
   return (await res.json())["data"] as RoleInfo[];
 }
 
+const SERVICE = "https://ucloud.bupt.edu.cn";
+const LOGIN_URL = `https://auth.bupt.edu.cn/authserver/login?service=${SERVICE}`;
+
+/**
+ * 解析 CAS `serviceValidate` 返回的 XML，提取用户属性。
+ */
+function parseCasResponse(xml: string): CASUserInfo {
+  const failure = /<cas:authenticationFailure[^>]*>([\s\S]*?)<\/cas:authenticationFailure>/.exec(xml);
+  if (failure) {
+    throw new LoginError(`登录失败(CAS): ${failure[1].trim()}`);
+  }
+  if (!/<cas:authenticationSuccess>/.test(xml)) {
+    throw new LoginError("登录失败(CAS): 无法解析校验响应");
+  }
+  const user = /<cas:user>(.*?)<\/cas:user>/.exec(xml)?.[1] ?? "";
+  const attributes: Record<string, string> = {};
+  const attrBlock = /<cas:attributes>([\s\S]*?)<\/cas:attributes>/.exec(xml)?.[1] ?? "";
+  const attrRe = /<cas:(\w+)>(.*?)<\/cas:\1>/g;
+  let match: RegExpExecArray | null;
+  while ((match = attrRe.exec(attrBlock)) !== null) {
+    attributes[match[1]] = match[2];
+  }
+  return {
+    user_name: attributes.uid ?? attributes.employeeNumber ?? user,
+    real_name: attributes.name ?? "",
+    type: attributes.type ?? "",
+    attributes,
+  };
+}
+
+/**
+ * 使用 CAS `serviceValidate` 端点校验 ticket 并返回用户信息。
+ * @param ticket CAS 登录后签发的 service ticket
+ * @param service 与登录时一致的 service 地址
+ */
+async function serviceValidate(ticket: string, service: string = SERVICE): Promise<CASUserInfo> {
+  const res = await fetch(
+    `https://auth.bupt.edu.cn/authserver/serviceValidate?service=${encodeURIComponent(
+      service
+    )}&ticket=${encodeURIComponent(ticket)}`
+  );
+  if (!res.ok) {
+    throw new LoginError(`登录失败(CAS): ${res.status} ${res.statusText}`);
+  }
+  return parseCasResponse(await res.text());
+}
+
 async function getCookieAndExecution(options?: LoginOptions): Promise<{
   id: string;
   cookie: string;
@@ -155,7 +230,7 @@ async function getCookieAndExecution(options?: LoginOptions): Promise<{
   captcha?: string;
 }> {
   const res = await fetch(
-    "https://auth.bupt.edu.cn/authserver/login?service=https://ucloud.bupt.edu.cn"
+    LOGIN_URL
   );
   const cookie = res.headers.get("set-cookie")?.split(";")?.[0];
   if (!cookie || !cookie.length) {
@@ -231,23 +306,37 @@ async function getCookieAndExecution(options?: LoginOptions): Promise<{
  *
  * 注意：如果登录时需要验证码但未配置 onCaptcha，会抛出错误。
  *
+ * 若 `options.cas` 为 `true`，则改用 CAS 直接校验获取用户信息，返回
+ * {@link CASUserInfo}（无 token、无角色）；否则走 ucloud 返回完整的
+ * {@link UserInfo} 及角色列表。返回类型会根据 `cas` 选项自动推导。
+ *
  * @param username 用户名
  * @param password 密码
  * @param options 登录选项
- * @returns Promise<{@link UserInfo}>
+ * @returns Promise<{@link UserInfo}> 或 Promise<{@link CASUserInfo}>
  */
+export function login(
+  username: string,
+  password: string,
+  options?: LoginOptions & { cas?: false }
+): Promise<UserInfo & { roles: RoleInfo[] }>;
+export function login(
+  username: string,
+  password: string,
+  options: LoginOptions & { cas: true }
+): Promise<CASUserInfo>;
 export async function login(
   username: string,
   password: string,
   options?: LoginOptions
-): Promise<UserInfo & { roles: RoleInfo[] }> {
+): Promise<(UserInfo & { roles: RoleInfo[] }) | CASUserInfo> {
   const sessionData = await getCookieAndExecution(options);
   const { cookie, execution } = sessionData;
   const bodyp = `username=${encodeURIComponent(
     username
   )}&password=${encodeURIComponent(password)}`;
   let response = await fetch(
-    "https://auth.bupt.edu.cn/authserver/login?service=https://ucloud.bupt.edu.cn",
+    LOGIN_URL,
     {
       method: "POST",
       headers: {
@@ -255,7 +344,7 @@ export async function login(
         "content-type": "application/x-www-form-urlencoded",
         cookie: cookie,
         referer:
-          "https://auth.bupt.edu.cn/authserver/login?service=https://ucloud.bupt.edu.cn",
+          LOGIN_URL,
         "user-agent":
           "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/118.0.0.0 Safari/537.36 Edg/118.0.2088.61",
       },
@@ -299,6 +388,9 @@ export async function login(
   const ticket = urlParams.get("ticket");
   if (!ticket) {
     throw new LoginError("登录失败(6): 无法获取到ticket");
+  }
+  if (options?.cas) {
+    return await serviceValidate(ticket, SERVICE);
   }
   response = await fetch(
     "https://apiucloud.bupt.edu.cn/ykt-basics/oauth/token",
